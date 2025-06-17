@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+  <meta charset="UTF-8" />
+  <title>مهام مع مستخدمين - Firebase</title>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCnzF72CG6lf3lBt6L_6JSZtXo-suYRbw4",
+      authDomain: "ajsw-8f6da.firebaseapp.com",
+      projectId: "ajsw-8f6da",
+      storageBucket: "ajsw-8f6da.firebasestorage.app",
+      messagingSenderId: "898283412857",
+      appId: "1:898283412857:web:bb432a752c9049ee2b63a8"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const taskForm = document.getElementById("taskForm");
+    const taskTableBody = document.getElementById("taskTableBody");
+
+    taskForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const taskLink = document.getElementById("taskLink").value.trim();
+      const siteLink = document.getElementById("siteLink").value.trim();
+      const notes = document.getElementById("notes").value.trim();
+      const users = document.getElementById("users").value.trim().split(',').map(u => u.trim()).filter(Boolean);
+
+      if (!taskLink || !siteLink) return alert("يرجى إدخال رابط المهمة ورابط الموقع.");
+
+      await addDoc(collection(db, "tasks"), {
+        taskLink,
+        siteLink,
+        notes,
+        users
+      });
+
+      taskForm.reset();
+    });
+
+    function renderTask(id, data) {
+      const row = document.createElement("tr");
+
+      const usersHtml = data.users.map(u => `<span>${u}</span>`).join('');
+
+      row.innerHTML = `
+        <td>${data.taskLink}</td>
+        <td>${data.siteLink}</td>
+        <td>${data.notes}</td>
+        <td class="users-list">${usersHtml}</td>
+        <td><button onclick="deleteTask(\"${id}\")">حذف</button></td>
+      `;
+
+      taskTableBody.appendChild(row);
+    }
+
+    window.deleteTask = async function(id) {
+      await deleteDoc(doc(db, "tasks", id));
+    }
+
+    onSnapshot(collection(db, "tasks"), (snapshot) => {
+      taskTableBody.innerHTML = "";
+      snapshot.forEach(doc => renderTask(doc.id, doc.data()));
+    });
+  </script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      direction: rtl;
+      padding: 20px;
+      background: #f2f2f2;
+    }
+    h2 {
+      text-align: center;
+    }
+    .form-container input,
+    .form-container button {
+      padding: 10px;
+      margin: 5px;
+      font-size: 14px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      margin-top: 20px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 10px;
+      text-align: center;
+    }
+    th {
+      background: #343a40;
+      color: white;
+    }
+    .users-list span {
+      display: block;
+      border-bottom: 1px solid #eee;
+      padding: 2px;
+    }
+  </style>
+</head>
+<body>
+  <h2>إدارة المهام</h2>
+  <form id="taskForm" class="form-container">
+    <input type="text" id="taskLink" placeholder="رابط المهمة" required />
+    <input type="text" id="siteLink" placeholder="رابط الموقع" required />
+    <input type="text" id="notes" placeholder="ملاحظات" />
+    <input type="text" id="users" placeholder="مستخدمين (مثال: أحمد، فاطمة)" />
+    <button type="submit">إضافة</button>
+  </form>
+
+  <table>
+    <thead>
+      <tr>
+        <th>رابط المهمة</th>
+        <th>رابط الموقع</th>
+        <th>ملاحظات</th>
+        <th>المستخدمين</th>
+        <th>إجراء</th>
+      </tr>
+    </thead>
+    <tbody id="taskTableBody">
+      <!-- البيانات من Firebase -->
+    </tbody>
+  </table>
+</body>
+</html>
