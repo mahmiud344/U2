@@ -2,10 +2,11 @@
 <html lang="ar">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>مهام مع مستخدمين - Firebase</title>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
-    import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
+    import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, onSnapshot, updateDoc } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyCnzF72CG6lf3lBt6L_6JSZtXo-suYRbw4",
@@ -21,112 +22,533 @@
 
     const taskForm = document.getElementById("taskForm");
     const taskTableBody = document.getElementById("taskTableBody");
+    const userInputsContainer = document.getElementById("userInputsContainer");
+
+    let editingTaskId = null;
+
+    // Initialize with one user input field
+    addUserInput();
 
     taskForm.addEventListener("submit", async (e) => {
       e.preventDefault();
+      
       const taskLink = document.getElementById("taskLink").value.trim();
       const siteLink = document.getElementById("siteLink").value.trim();
       const notes = document.getElementById("notes").value.trim();
-      const users = document.getElementById("users").value.trim().split(',').map(u => u.trim()).filter(Boolean);
+      
+      // Collect all user inputs
+      const userInputs = document.querySelectorAll('.user-input');
+      const users = Array.from(userInputs)
+        .map(input => input.value.trim())
+        .filter(Boolean);
 
-      if (!taskLink || !siteLink) return alert("يرجى إدخال رابط المهمة ورابط الموقع.");
+      if (!taskLink || !siteLink) {
+        alert("يرجى إدخال رابط المهمة ورابط الموقع.");
+        return;
+      }
 
-      await addDoc(collection(db, "tasks"), {
-        taskLink,
-        siteLink,
-        notes,
-        users
-      });
+      try {
+        if (editingTaskId) {
+          // Update existing task
+          await updateDoc(doc(db, "tasks", editingTaskId), {
+            taskLink,
+            siteLink,
+            notes,
+            users
+          });
+          editingTaskId = null;
+          document.getElementById("submitBtn").textContent = "إضافة";
+          document.getElementById("cancelBtn").style.display = "none";
+        } else {
+          // Add new task
+          await addDoc(collection(db, "tasks"), {
+            taskLink,
+            siteLink,
+            notes,
+            users
+          });
+        }
 
-      taskForm.reset();
+        taskForm.reset();
+        resetUserInputs();
+      } catch (error) {
+        alert("حدث خطأ: " + error.message);
+      }
     });
+
+    function addUserInput(value = '') {
+      const userInputDiv = document.createElement("div");
+      userInputDiv.className = "user-input-container";
+      
+      userInputDiv.innerHTML = `
+        <input type="text" class="user-input" placeholder="اسم المستخدم" value="${value}" />
+        <button type="button" class="remove-user-btn" onclick="removeUserInput(this)">×</button>
+      `;
+      
+      userInputsContainer.appendChild(userInputDiv);
+    }
+
+    function resetUserInputs() {
+      userInputsContainer.innerHTML = '';
+      addUserInput();
+    }
+
+    window.removeUserInput = function(button) {
+      const container = button.parentElement;
+      const remainingInputs = document.querySelectorAll('.user-input-container').length;
+      
+      if (remainingInputs > 1) {
+        container.remove();
+      } else {
+        alert("يجب أن يكون هناك حقل واحد على الأقل للمستخدمين");
+      }
+    }
+
+    window.addMoreUsers = function() {
+      addUserInput();
+    }
 
     function renderTask(id, data) {
       const row = document.createElement("tr");
+      row.setAttribute("data-id", id);
 
-      const usersHtml = data.users.map(u => `<span>${u}</span>`).join('');
+      const usersHtml = data.users.map(u => `<span class="user-tag">${u}</span>`).join('');
 
       row.innerHTML = `
-        <td>${data.taskLink}</td>
-        <td>${data.siteLink}</td>
-        <td>${data.notes}</td>
-        <td class="users-list">${usersHtml}</td>
-        <td><button onclick="deleteTask(\"${id}\")">حذف</button></td>
+        <td class="task-link-cell">
+          <span class="display-mode">${data.taskLink}</span>
+          <input type="text" class="edit-mode edit-input" value="${data.taskLink}" style="display: none;" />
+        </td>
+        <td class="site-link-cell">
+          <span class="display-mode">${data.siteLink}</span>
+          <input type="text" class="edit-mode edit-input" value="${data.siteLink}" style="display: none;" />
+        </td>
+        <td class="notes-cell">
+          <span class="display-mode">${data.notes}</span>
+          <input type="text" class="edit-mode edit-input" value="${data.notes}" style="display: none;" />
+        </td>
+        <td class="users-cell">
+          <div class="display-mode users-list">${usersHtml}</div>
+          <div class="edit-mode users-edit" style="display: none;">
+            ${data.users.map(u => `<input type="text" class="user-edit-input" value="${u}" />`).join('')}
+            <button type="button" onclick="addUserEditInput(this)">+ إضافة مستخدم</button>
+          </div>
+        </td>
+        <td class="actions-cell">
+          <div class="display-mode">
+            <button class="edit-btn" onclick="startEdit('${id}')">تعديل</button>
+            <button class="delete-btn" onclick="deleteTask('${id}')">حذف</button>
+          </div>
+          <div class="edit-mode" style="display: none;">
+            <button class="save-btn" onclick="saveEdit('${id}')">حفظ</button>
+            <button class="cancel-btn" onclick="cancelEdit('${id}')">إلغاء</button>
+          </div>
+        </td>
       `;
 
       taskTableBody.appendChild(row);
     }
 
-    window.deleteTask = async function(id) {
-      await deleteDoc(doc(db, "tasks", id));
+    window.startEdit = function(id) {
+      const row = document.querySelector(`tr[data-id="${id}"]`);
+      const displayElements = row.querySelectorAll('.display-mode');
+      const editElements = row.querySelectorAll('.edit-mode');
+      
+      displayElements.forEach(el => el.style.display = 'none');
+      editElements.forEach(el => el.style.display = 'block');
     }
 
+    window.cancelEdit = function(id) {
+      const row = document.querySelector(`tr[data-id="${id}"]`);
+      const displayElements = row.querySelectorAll('.display-mode');
+      const editElements = row.querySelectorAll('.edit-mode');
+      
+      displayElements.forEach(el => el.style.display = 'block');
+      editElements.forEach(el => el.style.display = 'none');
+    }
+
+    window.saveEdit = async function(id) {
+      const row = document.querySelector(`tr[data-id="${id}"]`);
+      
+      const taskLink = row.querySelector('.task-link-cell .edit-input').value.trim();
+      const siteLink = row.querySelector('.site-link-cell .edit-input').value.trim();
+      const notes = row.querySelector('.notes-cell .edit-input').value.trim();
+      
+      const userInputs = row.querySelectorAll('.user-edit-input');
+      const users = Array.from(userInputs)
+        .map(input => input.value.trim())
+        .filter(Boolean);
+
+      if (!taskLink || !siteLink) {
+        alert("يرجى إدخال رابط المهمة ورابط الموقع.");
+        return;
+      }
+
+      try {
+        await updateDoc(doc(db, "tasks", id), {
+          taskLink,
+          siteLink,
+          notes,
+          users
+        });
+        
+        cancelEdit(id);
+      } catch (error) {
+        alert("حدث خطأ في التحديث: " + error.message);
+      }
+    }
+
+    window.addUserEditInput = function(button) {
+      const container = button.parentElement;
+      const newInput = document.createElement('input');
+      newInput.type = 'text';
+      newInput.className = 'user-edit-input';
+      newInput.placeholder = 'اسم المستخدم';
+      
+      container.insertBefore(newInput, button);
+    }
+
+    window.deleteTask = async function(id) {
+      if (confirm("هل أنت متأكد من حذف هذه المهمة؟")) {
+        try {
+          await deleteDoc(doc(db, "tasks", id));
+        } catch (error) {
+          alert("حدث خطأ في الحذف: " + error.message);
+        }
+      }
+    }
+
+    window.cancelEditForm = function() {
+      editingTaskId = null;
+      document.getElementById("submitBtn").textContent = "إضافة";
+      document.getElementById("cancelBtn").style.display = "none";
+      taskForm.reset();
+      resetUserInputs();
+    }
+
+    // Listen for real-time updates
     onSnapshot(collection(db, "tasks"), (snapshot) => {
       taskTableBody.innerHTML = "";
       snapshot.forEach(doc => renderTask(doc.id, doc.data()));
+    }, (error) => {
+      console.error("خطأ في جلب البيانات:", error);
+      alert("حدث خطأ في جلب البيانات: " + error.message);
     });
   </script>
   <style>
     body {
-      font-family: Arial, sans-serif;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       direction: rtl;
       padding: 20px;
-      background: #f2f2f2;
+      background: #f8f9fa;
+      margin: 0;
     }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
     h2 {
       text-align: center;
+      color: #333;
+      margin-bottom: 30px;
     }
+
+    .form-container {
+      background: white;
+      padding: 25px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      margin-bottom: 30px;
+    }
+
+    .form-row {
+      display: flex;
+      gap: 15px;
+      margin-bottom: 15px;
+      flex-wrap: wrap;
+    }
+
+    .form-row input {
+      flex: 1;
+      min-width: 200px;
+    }
+
     .form-container input,
     .form-container button {
+      padding: 12px;
+      font-size: 14px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+
+    .form-container input {
+      outline: none;
+    }
+
+    .form-container input:focus {
+      border-color: #007bff;
+      box-shadow: 0 0 0 2px rgba(0,123,255,0.25);
+    }
+
+    .users-section {
+      margin-top: 20px;
+    }
+
+    .users-section label {
+      display: block;
+      margin-bottom: 10px;
+      font-weight: bold;
+      color: #333;
+    }
+
+    .user-input-container {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+      align-items: center;
+    }
+
+    .user-input {
+      flex: 1;
       padding: 10px;
-      margin: 5px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+
+    .remove-user-btn {
+      background: #dc3545;
+      color: white;
+      border: none;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .remove-user-btn:hover {
+      background: #c82333;
+    }
+
+    .add-user-btn {
+      background: #28a745;
+      color: white;
+      border: none;
+      padding: 8px 15px;
+      border-radius: 5px;
+      cursor: pointer;
       font-size: 14px;
     }
+
+    .add-user-btn:hover {
+      background: #218838;
+    }
+
+    .form-buttons {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .submit-btn {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 12px 25px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    .submit-btn:hover {
+      background: #0056b3;
+    }
+
+    .cancel-btn {
+      background: #6c757d;
+      color: white;
+      border: none;
+      padding: 12px 25px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+      display: none;
+    }
+
+    .cancel-btn:hover {
+      background: #545b62;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
       background: white;
-      margin-top: 20px;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
     }
+
     th, td {
-      border: 1px solid #ccc;
-      padding: 10px;
+      border: 1px solid #dee2e6;
+      padding: 12px;
       text-align: center;
     }
+
     th {
       background: #343a40;
       color: white;
+      font-weight: bold;
     }
-    .users-list span {
-      display: block;
-      border-bottom: 1px solid #eee;
-      padding: 2px;
+
+    .users-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      justify-content: center;
+    }
+
+    .user-tag {
+      background: #e9ecef;
+      padding: 4px 8px;
+      border-radius: 15px;
+      font-size: 12px;
+      border: 1px solid #adb5bd;
+    }
+
+    .users-edit {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .user-edit-input {
+      padding: 5px;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+
+    .edit-input {
+      width: 100%;
+      padding: 5px;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+    }
+
+    .edit-btn, .delete-btn, .save-btn, .cancel-btn {
+      padding: 6px 12px;
+      margin: 2px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .edit-btn {
+      background: #ffc107;
+      color: #000;
+    }
+
+    .edit-btn:hover {
+      background: #e0a800;
+    }
+
+    .delete-btn {
+      background: #dc3545;
+      color: white;
+    }
+
+    .delete-btn:hover {
+      background: #c82333;
+    }
+
+    .save-btn {
+      background: #28a745;
+      color: white;
+    }
+
+    .save-btn:hover {
+      background: #218838;
+    }
+
+    .cancel-btn {
+      background: #6c757d;
+      color: white;
+      display: inline-block;
+    }
+
+    .cancel-btn:hover {
+      background: #545b62;
+    }
+
+    .actions-cell {
+      min-width: 120px;
+    }
+
+    @media (max-width: 768px) {
+      .form-row {
+        flex-direction: column;
+      }
+      
+      .form-row input {
+        min-width: auto;
+      }
+      
+      table {
+        font-size: 12px;
+      }
+      
+      th, td {
+        padding: 8px;
+      }
     }
   </style>
 </head>
 <body>
-  <h2>إدارة المهام</h2>
-  <form id="taskForm" class="form-container">
-    <input type="text" id="taskLink" placeholder="رابط المهمة" required />
-    <input type="text" id="siteLink" placeholder="رابط الموقع" required />
-    <input type="text" id="notes" placeholder="ملاحظات" />
-    <input type="text" id="users" placeholder="مستخدمين (مثال: أحمد، فاطمة)" />
-    <button type="submit">إضافة</button>
-  </form>
+  <div class="container">
+    <h2>إدارة المهام المتقدمة</h2>
+    
+    <form id="taskForm" class="form-container">
+      <div class="form-row">
+        <input type="text" id="taskLink" placeholder="رابط المهمة *" required />
+        <input type="text" id="siteLink" placeholder="رابط الموقع *" required />
+      </div>
+      
+      <div class="form-row">
+        <input type="text" id="notes" placeholder="ملاحظات (اختياري)" />
+      </div>
+      
+      <div class="users-section">
+        <label>المستخدمين:</label>
+        <div id="userInputsContainer"></div>
+        <button type="button" class="add-user-btn" onclick="addMoreUsers()">+ إضافة مستخدم آخر</button>
+      </div>
+      
+      <div class="form-buttons">
+        <button type="submit" id="submitBtn" class="submit-btn">إضافة</button>
+        <button type="button" id="cancelBtn" class="cancel-btn" onclick="cancelEditForm()">إلغاء</button>
+      </div>
+    </form>
 
-  <table>
-    <thead>
-      <tr>
-        <th>رابط المهمة</th>
-        <th>رابط الموقع</th>
-        <th>ملاحظات</th>
-        <th>المستخدمين</th>
-        <th>إجراء</th>
-      </tr>
-    </thead>
-    <tbody id="taskTableBody">
-      <!-- البيانات من Firebase -->
-    </tbody>
-  </table>
+    <table>
+      <thead>
+        <tr>
+          <th>رابط المهمة</th>
+          <th>رابط الموقع</th>
+          <th>ملاحظات</th>
+          <th>المستخدمين</th>
+          <th>الإجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="taskTableBody">
+        <!-- البيانات من Firebase -->
+      </tbody>
+    </table>
+  </div>
 </body>
 </html>
